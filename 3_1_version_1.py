@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import torchvision
 import torchvision.transforms as transforms
 
-TRAINDATA_PATH = "../hymenoptera_data/train/"
-TESTDATA_PATH  = "../hymenoptera_data/test/"
+TRAINDATA_PATH = "hymenoptera_data/train/"
+TESTDATA_PATH  = "hymenoptera_data/val/"
 
 # CNN
 class Net(nn.Module):
