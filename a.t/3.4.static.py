@@ -198,6 +198,7 @@ if __name__ == '__main__':
                         model.train(mode=was_training)
                         return
             model.train(mode=was_training)
+
     import torchvision.models.quantization as models
     import torch.nn as nn
     import torch.optim as optim
@@ -229,7 +230,6 @@ if __name__ == '__main__':
     model_fp32 = copy.deepcopy(model)
     model_fp32.eval()
     model_fp32.qconfig = torch.quantization.get_default_qconfig('fbgemm')
-    #print(model_fp32)
     model_fp32 = torch.quantization.fuse_modules(model_fp32,[["conv1","bn1","relu"]],inplace=True)
 
     for module_name, module in model_fp32.named_children():
