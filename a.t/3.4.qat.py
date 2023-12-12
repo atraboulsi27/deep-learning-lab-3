@@ -23,7 +23,7 @@ if __name__ == '__main__':
         ]),
     }
 
-    data_dir = 'data/hymenoptera_data'
+    data_dir = 'dataset/hymenoptera_data'
     image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),
                                             data_transforms[x])
                     for x in ['train', 'val']}
@@ -168,15 +168,9 @@ if __name__ == '__main__':
                     return
                 model.train(mode=was_training)
 
-    # notice `quantize=False`
-    model = models.resnet18(pretrained=True, progress=True, quantize=False)
-    num_ftrs = model.fc.in_features
-
-    # Step 1
-    model.train()
-    model.fuse_model()
-
-    visualize_model(model)
+    import torchvision.models.quantization as models
+    nonq_model = models.resnet18(pretrained=True, progress=True, quantize=False)
+    nonq_model.fuse_model()
 
     def print_size_of_model(model, label=""):
         torch.save(model.state_dict(), "temp.p")
@@ -185,101 +179,34 @@ if __name__ == '__main__':
         os.remove('temp.p')
         return size
 
-    # compare the sizes
-    f=print_size_of_model(model,"fp32")
+    f=print_size_of_model(nonq_model,"fp32")
 
-    # compare the performance
-    startTime = time.time()
-    model.forward(inputs, hidden)
-    executionTime = (time.time() - startTime)
+    val_dir = data_dir + "/val"
 
-    print('Floating point execution time in seconds: ' + str(executionTime))
-
-    startTime = time.time()
-    quantized_lstm.forward(inputs,hidden)
-    executionTime = (time.time() - startTime)
-
-    print('Quanitzed int execution time in seconds: ' + str(executionTime))
-
-    out1, hidden1 = float_lstm(inputs, hidden)
-    mag1 = torch.mean(abs(out1)).item()
-    print('mean absolute value of output tensor values in the FP32 model is {0:.5f} '.format(mag1))
-
-    # run the quantized model
-    out2, hidden2 = quantized_lstm(inputs, hidden)
-    mag2 = torch.mean(abs(out2)).item()
-    print('mean absolute value of output tensor values in the INT8 model is {0:.5f}'.format(mag2))
-
-    # compare them
-    mag3 = torch.mean(abs(out1-out2)).item()
-    print('mean absolute value of the difference between the output tensors is {0:.5f} or {1:.2f} percent'.format(mag3,mag3/mag1*100))
-
-            
+    testset = torchvision.datasets.ImageFolder(data_dir, transform=data_transforms['val'])
+    testloader = torch.utils.data.DataLoader(testset, batch_size=4, shuffle=False, num_workers=4)
 
 
+    def test_model(model):
+        dataiter = iter(testloader)
+        images, labels = next(dataiter)
+        correct = 0
+        total = 0
+        # since we're not training, we don't need to calculate the gradients for our outputs
+        with torch.no_grad():
+            for data in testloader:
+                images, labels = data
+                # calculate outputs by running images through the network
+                outputs = model(images)
+                # the class with the highest energy is what we choose as prediction
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
 
-    # Step 2
-    from torch import nn
+        print(f'Accuracy of the network on the validation images: {(100 * correct / total):.4f} %')                     
 
-    def create_combined_model(model_fe):
-    # Step 1. Isolate the feature extractor.
-        model_fe_features = nn.Sequential(
-            model_fe.quant,  # Quantize the input
-            model_fe.conv1,
-            model_fe.bn1,
-            model_fe.relu,
-            model_fe.maxpool,
-            model_fe.layer1,
-            model_fe.layer2,
-            model_fe.layer3,
-            model_fe.layer4,
-            model_fe.avgpool,
-            model_fe.dequant,  # Dequantize the output
-        )
+    from torch.profiler import profile, record_function, ProfilerActivity
 
-        # Step 2. Create a new "head"
-        new_head = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(num_ftrs, 2),
-        )
-
-        # Step 3. Combine, and don't forget the quant stubs.
-        new_model = nn.Sequential(
-            model_fe_features,
-            nn.Flatten(1),
-            new_head,
-        )
-        return new_model
-
-    model_ft = create_combined_model(model)
-    model_ft[0].qconfig = torch.quantization.default_qat_qconfig  # Use default QAT configuration
-    # Step 3
-    model_ft = torch.quantization.prepare_qat(model_ft, inplace=True)
-
-    for param in model_ft.parameters():
-        param.requires_grad = True
-
-    model_ft.to(device)  # We can fine-tune on GPU if available
-
-    criterion = nn.CrossEntropyLoss()
-
-    # Note that we are training everything, so the learning rate is lower
-    # Notice the smaller learning rate
-    optimizer_ft = optim.SGD(model_ft.parameters(), lr=1e-3, momentum=0.9, weight_decay=0.1)
-
-    # Decay LR by a factor of 0.3 every several epochs
-    exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer_ft, step_size=5, gamma=0.3)
-
-    model_ft_tuned = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
-                                num_epochs=25, device=device)
-
-    from torch.quantization import convert
-    model_ft_tuned.cpu()
-
-    model_quantized_and_trained = convert(model_ft_tuned, inplace=False)
-
-    visualize_model(model_quantized_and_trained)
-
-    plt.ioff()
-    plt.tight_layout()
-    plt.show()
+    with profile(activities=[ProfilerActivity.CPU], record_shapes=True, profile_memory=True) as prof:
+        test_model(nonq_model)
+    print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=100))

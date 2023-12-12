@@ -87,7 +87,7 @@ def testing():
     testset = datasets.MNIST(root='./data', train=True,
                                             download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                              shuffle=True, num_workers=2)
+                                              shuffle=False, num_workers=2)
 
     net = Net()
     net.load_state_dict(torch.load(PATH))
